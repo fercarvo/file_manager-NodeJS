@@ -1,8 +1,10 @@
 var mongoose = require('mongoose');
 
 var FileSchema = new mongoose.Schema({
-	original_name: String,
-	new_name: String,
+	name: String,
+	path: String,
+	size: String,
+	type: String,
 	changed: {type: String, default: "false"}
 });
 

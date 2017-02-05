@@ -4,7 +4,10 @@ var router = express.Router();
 var mongoose = require('mongoose');
 var File = require('../models/File.js');
 var fs = require("fs");
+var path = require('path');
+var async = require('async');
 
+var uploads_dir = __dirname + '/../public/uploads/';
 module.exports = router;
 
 //Metodo que agrega uno o varios archivos a la base de datos
@@ -12,35 +15,45 @@ module.exports = router;
 router.post('/files', function(req, res, next){
   var files = [];
   var form = new formidable.IncomingForm();
-  var files_metadata = [];
+
+  form.uploadDir = uploads_dir;
+
   form.parse(req);
 
-  form.on('fileBegin', function (name, file){
-    var new_name = Date.now() + '_' + file.name;
-    file.path = __dirname + '/../public/uploads/' + new_name;
-
-    var file = new File({
-      original_name: file.name,
-      new_name: new_name
-    });
-
-    file.save(function(err, doc){
-    		if (err) {
-    			return next(err);
-    		} else {
-          files_metadata.push(doc);
-          res.json(doc);
-    		}
+  form.on('file', function(name, file) {
+    //console.log(files);
+    files.push({
+      name: file.name,
+      path: path.basename(file.path),
+      size: file.size,
+      type: file.type
     });
 
   });
 
-  form.on('file', function(field, file) {
-      files.push({"field": field, "file": file});
-      //console.log('files xxxxxxxxxx ' + files.length);
-  })
   form.on('end', function() {
-    console.log(files.length + ' archivos agregados');
+    var docs = []
+    async.each(files, function(file, callback){
+
+      var file = new File(file);
+      file.save(function(err, doc){
+          if (err) {
+            console.log(err);
+            callback(err);
+          } else {
+            docs.push(doc);
+            callback();
+          }
+      });
+
+    }, function(err){
+      if (err) {
+        console.log(err);
+      } else {
+        console.log(docs.length + ' archivos agregados');
+        res.json(docs);
+      }
+    });
   });
 
 });
@@ -51,14 +64,14 @@ router.get('/files/:id', function(req, res, next){
 		if (err) {
 			return next(err);
 		} else if (doc) { //validacion de la existencia metadata
-      var path = __dirname + '/../public/uploads/' + doc.new_name;
-      fs.access(path, function(err){ //validacion de la existencia de la data
-        if (err) {
+      var path = uploads_dir + doc.path;
+      fs.access(path, function(err){
+        if (err) { //Si el archivo no existe...
           res.json({message: 'this file does not exist'});
-        } else {
+        } else { //Si el archivo existe...
           res.writeHead(200, {
             "Content-Type": "application/octet-stream",
-            "Content-Disposition" : "inline; filename=" + doc.new_name
+            "Content-Disposition" : "inline; filename=" + doc.name
           });
 
           var readStream = fs.createReadStream(path);
@@ -96,19 +109,19 @@ router.get('/files', function(req, res){
 
 
 //Deputa la metadata del sistema, elimina los registros que no tienen un archivo asociado.
-router.post('/files/depure', function(req, res){
+router.post('/files/depure', function(req, res, next){
   File.find({}, function(err, docs){
 		if (err) {
 			return next(err);
 		} else {
       docs.forEach(function(doc){
-        fs.access(__dirname + '/../public/uploads/' + doc.new_name, function(err){
-            if (err) {
-              File.remove({new_name: doc.new_name}, function(err){
+        fs.access(uploads_dir + doc.path, function(err){
+            if (err) { //Si no existe el archivo...
+              File.remove({_id: doc._id}, function(err){
                   if (err) {
                     console.log(err);
                   } else {
-                    console.log(doc.new_name + ' deleted from metadata');
+                    console.log(doc.name + ' (' + doc.path + ') deleted from metadata');
                   }
               });
             }
@@ -125,17 +138,17 @@ router.delete('/files/:id', function(req, res, next){
 		if(err){
 			return next(err);
 		} else if (doc) {
-      var path = __dirname + '/../public/uploads/'+ doc.new_name;
-      fs.access(path, function(err){ //se valida si la ruta (archivo) existe
-        if (err) {
+      var path = uploads_dir + doc.path;
+      fs.access(path, function(err){
+        if (err) { //Si el documento no existe...
           res.json({message: 'this file does not exist'});
-        } else { //Si el archivo existe, entra aqui
+        } else { //Si el socumento existe...
           fs.unlink(path, function(err){
               if (err) { //cualquier error al eliminar el archivo
                   return next(err);
               } else {
                 doc.remove();
-                console.log('\n' + doc.new_name + ' has been deleted');
+                console.log(doc.name + ' (' + doc.path + ') has been deleted');
                 res.json({message: 'this file has been deleted', file: doc});
               }
           });
@@ -155,7 +168,7 @@ router.put('/files/:id', function(req, res, next){
   form.on('fileBegin', function (name, file){
 
     var new_file_name = Date.now() + '_' + file.name; //Nombre del archivo entrante
-    file.path = __dirname + '/../public/uploads/' + new_file_name;
+    file.path = uploads_dir + new_file_name;
 
 
     File.findOne({_id:req.params.id}, function(err, doc){
